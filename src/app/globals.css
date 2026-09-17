@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f3f7f4;
+  --bg-deep: #e5efe8;
+  --ink: #1a2e24;
+  --muted: #5c7266;
+  --brand: #0f6b4c;
+  --brand-soft: #d8f0e4;
+  --accent: #e8a017;
+  --accent-soft: #fff3d6;
+  --ok: #1b7a45;
+  --ok-soft: #d9f5e4;
+  --bad: #b42318;
+  --bad-soft: #fde8e6;
+  --card: rgba(255, 255, 255, 0.82);
+  --line: rgba(26, 46, 36, 0.1);
+  --shadow: 0 18px 50px rgba(15, 55, 38, 0.1);
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-bg-deep: var(--bg-deep);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-brand: var(--brand);
+  --color-brand-soft: var(--brand-soft);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-bad: var(--bad);
+  --color-bad-soft: var(--bad-soft);
+  --color-card: var(--card);
+  --color-line: var(--line);
+  --font-sans: var(--font-sora);
+  --font-display: var(--font-fraunces);
+  --font-urdu: var(--font-nastaliq);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  color: var(--ink);
+  font-family: var(--font-sora), system-ui, sans-serif;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, #dff3e8 0%, transparent 55%),
+    radial-gradient(900px 500px at 100% 0%, #ffe9b8 0%, transparent 45%),
+    linear-gradient(180deg, #f7fbf8 0%, #eef5f0 100%);
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image: url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%230f6b4c' fill-opacity='0.04'%3E%3Cpath d='M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v2h4v4h2V6h4V4H6z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E");
+  z-index: 0;
+}
+
+.urdu {
+  font-family: var(--font-nastaliq), "Noto Nastaliq Urdu", serif;
+  line-height: 2.1;
+  direction: rtl;
+  text-align: right;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
