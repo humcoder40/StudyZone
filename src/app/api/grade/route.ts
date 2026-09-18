@@ -7,6 +7,7 @@ import {
 } from "@/lib/geminiModels";
 
 export const runtime = "nodejs";
+export const maxDuration = 60; // Vercel: enough for Gemini grading + fallbacks
 
 type Body = {
   kind: "short" | "translation" | "pairs";
