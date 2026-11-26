@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import type { McqSet } from "@/data/exercises";
 import Link from "next/link";
+import { saveAttemptAnswer } from "@/lib/saveAttempt";
+import { useSession } from "@/lib/auth-client";
 
 const sectionLabel: Record<string, string> = {
   verb: "Correct form of verb",
@@ -14,8 +16,11 @@ const sectionLabel: Record<string, string> = {
 
 export function McqQuiz({ set }: { set: McqSet }) {
   const reduce = useReducedMotion();
+  const { data: session } = useSession();
   const [index, setIndex] = useState(0);
   const [picked, setPicked] = useState<Record<string, string>>({});
+  const [saveNote, setSaveNote] = useState<string | null>(null);
+  const attemptIdRef = useRef<string | null>(null);
   const q = set.questions[index];
   const answered = picked[q.id];
   const isCorrect = answered === q.correctId;
@@ -29,9 +34,43 @@ export function McqQuiz({ set }: { set: McqSet }) {
 
   const done = Object.keys(picked).length === set.questions.length;
 
-  function choose(optionId: string) {
+  async function choose(optionId: string) {
     if (picked[q.id]) return;
-    setPicked((prev) => ({ ...prev, [q.id]: optionId }));
+    const nextPicked = { ...picked, [q.id]: optionId };
+    setPicked(nextPicked);
+
+    if (!session?.user) {
+      setSaveNote("Log in to save progress.");
+      return;
+    }
+
+    const correct = optionId === q.correctId;
+    const answeredCount = Object.keys(nextPicked).length;
+    const nextScore = set.questions.reduce((acc, question) => {
+      if (nextPicked[question.id] === question.correctId) return acc + 1;
+      return acc;
+    }, 0);
+    const finished = answeredCount === set.questions.length;
+
+    const saved = await saveAttemptAnswer({
+      questionId: q.id,
+      attemptId: attemptIdRef.current,
+      response: { selectedId: optionId },
+      isCorrect: correct,
+      score: correct ? 1 : 0,
+      maxScore: 1,
+      feedback: q.explanation,
+      finalize: finished
+        ? { score: nextScore, maxScore: set.questions.length }
+        : null,
+    });
+
+    if (saved) {
+      attemptIdRef.current = saved.attemptId;
+      setSaveNote(finished ? "Set saved to your account." : "Answer saved.");
+    } else {
+      setSaveNote("Could not save — are you logged in?");
+    }
   }
 
   return (
@@ -43,8 +82,13 @@ export function McqQuiz({ set }: { set: McqSet }) {
             Question {index + 1} / {set.questions.length}
           </p>
         </div>
-        <div className="rounded-2xl bg-accent-soft px-4 py-2 text-sm font-semibold text-ink">
-          Score {score}/{set.questions.length}
+        <div className="text-right">
+          <div className="rounded-2xl bg-accent-soft px-4 py-2 text-sm font-semibold text-ink">
+            Score {score}/{set.questions.length}
+          </div>
+          {saveNote ? (
+            <p className="mt-1 text-[11px] font-medium text-muted">{saveNote}</p>
+          ) : null}
         </div>
       </div>
 

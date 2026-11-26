@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
 import type { TranslationItem } from "@/data/exercises";
+import { saveAttemptAnswer } from "@/lib/saveAttempt";
 
 type Mode = "simple-english" | "urdu-photo";
 
@@ -111,7 +112,44 @@ export function EnToUrduPanel({ item }: { item: TranslationItem }) {
             : data.error?.message || "Grading failed";
         throw new Error(msg);
       }
-      setResult(data as GradeResult);
+      const grade = data as GradeResult;
+      setResult(grade);
+
+      let assetIds: string[] | undefined;
+      if (mode === "urdu-photo" && photoPreview) {
+        try {
+          const up = await fetch("/api/upload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              dataUrl: photoPreview,
+              purpose: "handwriting",
+              filename: photoName || undefined,
+            }),
+          });
+          const upData = await up.json();
+          if (up.ok && upData?.asset?.id) {
+            assetIds = [upData.asset.id as string];
+          }
+          // 503 = R2 not configured yet; grading still succeeded
+        } catch {
+          // ignore upload failures for this micro-step
+        }
+      }
+
+      await saveAttemptAnswer({
+        questionId: item.id,
+        response: {
+          mode: mode === "simple-english" ? "simple_english" : "translate",
+          text: mode === "simple-english" ? answer : grade.transcribedUrdu || "",
+        },
+        isCorrect: null,
+        score: grade.score,
+        maxScore: grade.maxScore,
+        feedback: grade.feedback,
+        gradeRaw: grade,
+        assetIds,
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not check with AI");
     } finally {

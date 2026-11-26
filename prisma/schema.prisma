@@ -1,0 +1,375 @@
+// StudyZone — platform schema
+//
+// Design:
+// - Shared CORE for any subject / book (catalog, content, attempts).
+// - Questions are polymorphic: type + JSON payload validated by a SubjectPack
+//   in TypeScript (see src/lib/schema/). English PTB 10th is the first pack.
+// - Other subjects add a new pack + question types; core tables stay stable.
+// - Auth tables (Better Auth) can be added alongside User without changing
+//   assessment models.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Identity (Better Auth + StudyZone fields) ────────────────────────────
+
+enum UserRole {
+  STUDENT
+  TEACHER
+  ADMIN
+}
+
+/// Better Auth core user + app role / relations.
+/// @@map lowercase names required by Better Auth's Prisma checks.
+model User {
+  id            String   @id @default(cuid())
+  name          String
+  email         String   @unique
+  emailVerified Boolean  @default(false)
+  image         String?
+  role          UserRole @default(STUDENT)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sessions    Session[]
+  accounts    Account[]
+  enrollments Enrollment[]
+  attempts    Attempt[]
+  assets      Asset[]
+
+  @@map("user")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("session")
+}
+
+model Account {
+  id                    String    @id @default(cuid())
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+  @@map("account")
+}
+
+model Verification {
+  id         String   @id @default(cuid())
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+  @@map("verification")
+}
+
+// ─── Catalog (subject → book → unit) ──────────────────────────────────────
+
+/// Subject pack key selects which question-type Zod schemas apply.
+/// Example: packKey = "english_ptb_10"
+model Subject {
+  id        String   @id @default(cuid())
+  slug      String   @unique // e.g. "english-compulsory"
+  name      String
+  packKey   String // registry key in src/lib/schema/packs
+  createdAt DateTime @default(now())
+
+  books Book[]
+}
+
+model Book {
+  id          String   @id @default(cuid())
+  slug        String   @unique // e.g. "10th-english-new"
+  title       String
+  gradeLabel  String // e.g. "10th"
+  language    String   @default("en")
+  editionYear Int?
+  subjectId   String
+  /// Optional path / R2 key to source PDF
+  sourceKey   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  subject Subject @relation(fields: [subjectId], references: [id])
+
+  units       Unit[]
+  pages       ContentPage[]
+  banks       QuestionBank[]
+  papers      Paper[]
+  enrollments Enrollment[]
+
+  @@index([subjectId])
+}
+
+model Unit {
+  id        String  @id @default(cuid())
+  bookId    String
+  number    Int // unit / chapter number as in book
+  title     String
+  /// Short teacher/AI context (glossary, key ideas) — not full OCR
+  summary   String? @db.Text
+  sortOrder Int     @default(0)
+
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  pages     ContentPage[]
+  questions Question[]
+
+  @@unique([bookId, number])
+  @@index([bookId])
+}
+
+/// OCR / textbook page text (from ocr/output). Source of truth for content RAG.
+model ContentPage {
+  id         String   @id @default(cuid())
+  bookId     String
+  unitId     String?
+  pdfPage    Int // 1-based PDF page index
+  printPage  Int? // printed page number if known
+  markdown   String   @db.Text
+  imageKey   String? // optional R2/local png key
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  book Book  @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  unit Unit? @relation(fields: [unitId], references: [id], onDelete: SetNull)
+
+  @@unique([bookId, pdfPage])
+  @@index([bookId, unitId])
+}
+
+model Enrollment {
+  id        String   @id @default(cuid())
+  userId    String
+  bookId    String
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  book Book @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, bookId])
+}
+
+// ─── Assessment shell (pack-agnostic) ─────────────────────────────────────
+
+enum GradingMode {
+  /// Single correct option / exact transform key
+  EXACT
+  /// Gemini rubric vs model answer(s)
+  AI
+  /// Exact when possible, else AI (e.g. narration variants)
+  HYBRID
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  SUBMITTED
+  GRADED
+}
+
+/// Logical bank inside a book (e.g. "practice", "unit-1 drills").
+model QuestionBank {
+  id        String   @id @default(cuid())
+  bookId    String
+  slug      String
+  title     String
+  createdAt DateTime @default(now())
+
+  book      Book       @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  questions Question[]
+
+  @@unique([bookId, slug])
+}
+
+/// Polymorphic question. `type` is validated by Subject.packKey registry.
+/// payload / answerKey shapes live in src/lib/schema/packs/<packKey>.
+/// Book is derived via bank (no bookId here). If unitId is set, app must ensure
+/// Unit.bookId === QuestionBank.bookId (see assertQuestionCatalogConsistency).
+model Question {
+  id       String @id @default(cuid())
+  bankId   String
+  unitId   String?
+  /// Bump when prompt/payload/answerKey change so attempts can pin a version
+  version  Int    @default(1)
+  /// Pack-defined type, e.g. "mcq", "short_answer", "translation", "pair_of_words"
+  type     String
+  /// Optional subtype within type, e.g. mcq → "verb" | "spelling" | "vocab" | "grammar"
+  subtype  String?
+  prompt   String @db.Text
+  marks    Float  @default(1)
+  /// Type-specific stem data (options, source text, word pairs, poem lines, …)
+  payload  Json
+  /// Type-specific key (correctId, modelAnswer, modelSentences, …)
+  answerKey Json
+  grading  GradingMode @default(EXACT)
+  /// Soft flag: essay/paragraph can exist in DB but stay out of practice UI
+  practiceEnabled Boolean @default(true)
+  sortOrder Int     @default(0)
+  meta      Json? // tags, difficulty, source refs, etc.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bank    QuestionBank @relation(fields: [bankId], references: [id], onDelete: Cascade)
+  unit    Unit?        @relation(fields: [unitId], references: [id], onDelete: SetNull)
+  items   PaperItem[]
+  answers AttemptAnswer[]
+
+  @@index([bankId, type])
+  @@index([unitId])
+}
+
+/// Full or sectional paper template (objective sheet, subjective sections, …).
+model Paper {
+  id          String   @id @default(cuid())
+  bookId      String
+  slug        String
+  title       String
+  /// e.g. "objective" | "subjective" | "full" | "practice"
+  kind        String   @default("practice")
+  totalMarks  Float?
+  timeMinutes Int?
+  /// Exclude Q.5-style long writing until product supports it
+  includeLongWriting Boolean @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  book     Book          @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  sections PaperSection[]
+  attempts Attempt[]
+
+  @@unique([bookId, slug])
+}
+
+model PaperSection {
+  id       String  @id @default(cuid())
+  paperId  String
+  code     String // "OBJ", "Q2", "Q3", …
+  title    String
+  /// Student must answer this many items from the section (e.g. any 5 of 8)
+  chooseCount Int?
+  marks    Float?
+  sortOrder Int    @default(0)
+  instructions String? @db.Text
+
+  paper Paper       @relation(fields: [paperId], references: [id], onDelete: Cascade)
+  items PaperItem[]
+
+  @@unique([paperId, code])
+  @@index([paperId])
+}
+
+model PaperItem {
+  id        String @id @default(cuid())
+  sectionId String
+  questionId String
+  sortOrder Int    @default(0)
+  /// Override marks for this paper placement
+  marks     Float?
+
+  section  PaperSection @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  question Question     @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([sectionId, questionId])
+  @@index([questionId])
+}
+
+// ─── Runtime attempts & grading ───────────────────────────────────────────
+
+model Attempt {
+  id        String        @id @default(cuid())
+  userId    String
+  paperId   String?
+  /// Free practice without a full paper (bank drill / single exercise)
+  bankId    String?
+  status    AttemptStatus @default(IN_PROGRESS)
+  startedAt DateTime      @default(now())
+  submittedAt DateTime?
+  score     Float?
+  maxScore  Float?
+  meta      Json?
+
+  user     User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  paper    Paper?          @relation(fields: [paperId], references: [id], onDelete: SetNull)
+  answers  AttemptAnswer[]
+
+  @@index([userId, status])
+  @@index([paperId])
+}
+
+model AttemptAnswer {
+  id         String   @id @default(cuid())
+  attemptId  String
+  questionId String
+  /// Student response shape depends on question type (validated in app)
+  response   Json
+  /// Optional photo / upload refs (handwritten Urdu, etc.)
+  assetIds   String[] @default([])
+  isCorrect  Boolean?
+  score      Float?
+  maxScore   Float?
+  feedback   String?  @db.Text
+  /// Raw AI grader payload for debugging / teacher review
+  gradeRaw   Json?
+  gradedAt   DateTime?
+  /// Frozen copy of the question at answer time (survives later edits)
+  questionVersion Int
+  typeSnapshot    String
+  promptSnapshot  String @db.Text
+  payloadSnapshot Json
+  answerKeySnapshot Json
+  marksSnapshot   Float
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  attempt  Attempt  @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, questionId])
+  @@index([questionId])
+}
+
+/// Uploaded media (Cloudflare R2 later). Handwritten translation photos, etc.
+model Asset {
+  id        String   @id @default(cuid())
+  userId    String
+  /// R2 object key or local path during dev
+  storageKey String
+  mimeType  String
+  bytes     Int?
+  purpose   String   @default("upload") // "handwriting" | "ocr_page" | …
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}

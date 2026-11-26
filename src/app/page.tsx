@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
+import { AuthBar } from "@/components/AuthBar";
 
 const modules = [
   {
@@ -43,6 +44,10 @@ export default function HomePage() {
 
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-1 flex-col px-5 py-10 sm:px-8 sm:py-14">
+      <div className="mb-6 flex justify-end">
+        <AuthBar />
+      </div>
+
       <motion.header
         initial={reduce ? false : { opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}

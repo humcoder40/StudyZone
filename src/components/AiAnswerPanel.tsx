@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { motion, useReducedMotion } from "framer-motion";
+import { saveAttemptAnswer } from "@/lib/saveAttempt";
 
 type GradeResult = {
   score: number;
@@ -21,6 +22,7 @@ type GradeResult = {
 
 export function AiAnswerPanel({
   kind,
+  questionId,
   prompt,
   modelAnswer,
   chapterHint,
@@ -29,6 +31,8 @@ export function AiAnswerPanel({
   urduAnswer,
 }: {
   kind: "short" | "translation" | "pairs";
+  /** Neon question id — required to persist attempts */
+  questionId?: string;
   prompt: string;
   modelAnswer: string;
   chapterHint?: string;
@@ -71,7 +75,27 @@ export function AiAnswerPanel({
             : data.error?.message || "Grading failed";
         throw new Error(msg);
       }
-      setResult(data as GradeResult);
+      const grade = data as GradeResult;
+      setResult(grade);
+
+      if (questionId) {
+        const response =
+          kind === "pairs"
+            ? {
+                // student typed both sentences in one box for now
+                text: answer,
+              }
+            : { text: answer };
+        await saveAttemptAnswer({
+          questionId,
+          response,
+          isCorrect: null,
+          score: grade.score,
+          maxScore: grade.maxScore,
+          feedback: grade.feedback,
+          gradeRaw: grade,
+        });
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not check with AI");
     } finally {
